@@ -1,0 +1,17 @@
+FROM node:15.12.0 as builder
+
+## Install build toolchain, install node deps and compile native add-ons
+RUN apk add --no-cache python3 make g++
+COPY ./package.json .
+RUN npm install -D sass
+RUN npm install --target_arch=x64
+COPY . .
+
+FROM node:16 as app
+
+## Copy built node modules and binaries without including the toolchain
+COPY --from=builder . .
+RUN npm cache clean -f
+
+EXPOSE 7001
+ENTRYPOINT npm run serve:test
