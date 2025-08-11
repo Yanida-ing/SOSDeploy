@@ -11,7 +11,7 @@ const logger = winston.createLogger({
     ),
     transports: [
         new winston.transports.MongoDB({
-            db: 'mongodb://mongo:27017/logs',  // URL ของ MongoDB (ใช้ service name 'mongo' ใน compose)
+            db: 'mongodb://mongo:27017/logs',  // URL ของ MongoDB
             collection: 'logs',  // ชื่อ collection ที่จะเก็บ log
             level: 'info',  // กำหนดระดับ log ที่จะบันทึก (สามารถปรับให้เหมาะสมได้)
             storeHost: true,  // เก็บ hostname
@@ -58,6 +58,26 @@ function logErrorData(req, res, body) {
     logger.error(`Request Error: ${req.url}`, logData);
 }
 
+
+// ฟังก์ชันสำหรับบันทึกข้อมูลที่เกี่ยวข้องกับ error
+function logErrorData(req, res, body) {
+    const logData = {
+        level: 'error',
+        method: req.method,
+        url: req.originalUrl,
+        body: req.body,
+        headers: req.headers,
+        query: req.query,
+        ip: req.ip,
+        status: 'error',
+        response: JSON.parse(JSON.stringify(body, null, 2)),
+        statusCode: res.statusCode,
+        timestamp: new Date() // เก็บ timestamp
+    };
+
+    logger.error(`Request Error: ${req.url}`, logData);
+}
+
 // ฟังก์ชันสำหรับลบ log เก่ากว่า 120 วัน (background)
 async function deleteOldLogs() {
     const cutoffDate = new Date();
@@ -73,6 +93,7 @@ async function deleteOldLogs() {
         console.error('Error deleting old logs:', error);
     }
 }
+
 
 // สร้าง middleware เพื่อดักจับข้อมูล response
 function loggerMiddleware (req, res, next){

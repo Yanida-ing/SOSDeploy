@@ -42,21 +42,18 @@ router.get('/status/:id', statusService.onQuery);
 // POST /default สำหรับสร้าง report แบบ default type/level
 router.post("/default", reportService.createReportWithDefaultTypeLevelHandler);
 
-// Basic CRUD routes
+// Report CRUD routes
 router.get("/", reportService.onQuerys);
 router.get("/:id", reportService.onQuery);
 router.post("/", reportService.onCreate);
 router.put("/", reportService.onUpdate);
 router.delete("/", reportService.onDelete);
 
-// Disaster report specific routes
-router.post("/disaster", reportService.onCreateReport);
-router.get("/disaster/all", reportService.onQueryReport);
 
 // New route for text-based disaster reporting
 router.post("/report", reportService.onCreateReport);
 
-// Enhanced CRUD routes
+// CRUD routes
 router.get("/type/:type", reportService.getReportsByType);
 router.get("/level/:level", reportService.getReportsByLevel);
 router.get("/status/:status", reportService.onQuerys);
@@ -65,20 +62,9 @@ router.get("/location/search", reportService.onQuerys);
 // Update operations
 router.put("/:id/status", reportService.onUpdate);
 router.put("/:id/media", reportService.onUpdate);
-router.put("/:id/assets", reportService.onUpdate);
+router.put("/:id/assets", reportService.setAssetsInReport);
 
-// PUT endpoint for updating contact info (same as PATCH)
-router.put('/report/:id', reportService.updateContact);
-
-// ===== AI Analysis & Vector Store =====
-router.post("/analyze", reportService.analyzeDisasterReportsRouteHandler);
-router.post("/embed", reportService.embedAllReportsRouteHandler);
-router.post("/search", reportService.searchDisasterReportsRouteHandler);
-
-// Manual grouping endpoint (clean version)
-router.post('/group', reportService.groupReportsRouteHandler);
-
-// ===== CRUD DisasterReportGroup =====
+// CRUD DisasterReportGroup 
 router.get('/group/:id', reportService.onQueryGroup);
 router.get('/groups', reportService.onQueryGroups);
 router.post('/group/create', reportService.onCreateGroup);
@@ -86,6 +72,10 @@ router.put('/group/update', reportService.onUpdateGroup);
 router.delete('/group/delete', reportService.onDeleteGroup);
 router.get('/group/suggest', aiService.suggestGroups);
 
+// Case Management routes
+router.post('/:id/open', reportService.openCaseHandler);
+router.post('/:id/close', reportService.closeCaseHandler);
+router.get('/:id/case-history', reportService.getCaseHistoryHandler);
 
 
 module.exports = router;

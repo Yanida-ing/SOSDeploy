@@ -3,7 +3,7 @@
 <!--    <TheSidebar/>-->
 <!--    <TheAside/>-->
     <CWrapper>
-      <TheHeader/>
+<!--      <TheHeader_Landing/>-->
       <div class="c-body">
         <main class="c-main">
           <CContainer fluid  >
@@ -12,7 +12,7 @@
             </transition>
           </CContainer>
         </main>
-        <TheFooter/>
+<!--        <TheFooter/>-->
       </div>
     </CWrapper>
     <CenterLoading/>
@@ -27,10 +27,12 @@ import TheFooter from './TheFooter'
 import TheAside from './TheAside'
 import CenterLoading from "@/projects/components/dialog/CenterLoading.vue";
 import DialogMessage from "@/projects/components/dialog/DialogMessage.vue";
+import TheHeader_Landing from "@/containers/TheHeader_Landing.vue";
 
 export default {
   name: 'TheContainer_Landing',
   components: {
+    TheHeader_Landing,
     DialogMessage,
     CenterLoading,
     TheSidebar,

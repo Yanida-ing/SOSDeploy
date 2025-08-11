@@ -1,4 +1,6 @@
 const express = require('express');
+// ลบ express-session
+// const session = require('express-session');
 const bodyParser = require("body-parser");
 const nocache = require("nocache");
 const nosniff = require("dont-sniff-mimetype");
@@ -19,20 +21,27 @@ const { limiter, blockMiddleware } = require('../config/rateLimit');
 const  loggerMiddleware  = require('../config/logger');
 
 module.exports = function (app) {
+    // ===== ลบ express-session middleware =====
+    // app.use(session({
+    //   secret: process.env.SESSION_SECRET || 'your-secret-key',
+    //   resave: false,
+    //   saveUninitialized: true,
+    //   cookie: { maxAge: 60 * 60 * 1000 } // 1 ชั่วโมง
+    // }));
 
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
     app.use(compression());
-    if (process.env.NODE_ENV === 'production') {
 
+    // ใช้ CORS middleware ทุกโหมด
+    app.use(cors(corsOptions));
+    app.options('*', cors(corsOptions));
+
+    if (process.env.NODE_ENV === 'production') {
         app.use(blockMiddleware); // ตรวจสอบ IP ก่อน
         app.use(limiter); // ใช้ rate limiter หลังจากตรวจสอบ IP
-        // ใช้ CORS Middleware
-        app.use(cors(corsOptions));
-        // การตรวจสอบ IP ที่อนุญาต
         app.use(ipCheckMiddleware);
-
         app.use(morgan('combined')); // ใช้ log format ที่เหมาะสม
     } else {
         app.use(morgan('dev')); // ใช้ log format สำหรับ development

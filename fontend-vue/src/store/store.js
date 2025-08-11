@@ -5,7 +5,14 @@ Vue.use(Vuex);
 import DialogMessages from "./modules/Dialog/index";
 import Setting from './modules/Setting/index'
 import Auth from "./modules/Authen/index";
-
+import ReportChat from "./modules/ReportChat/index";
+import ReportForm from "./modules/ReportForm/index";
+import Dashboard2 from './modules/Dashboard2/Dashboard2';
+import Dashboard from './modules/Dashboard/Dashboard';
+import History from './modules/History/History';
+import FilterOptions from './modules/FilterOptions/index';
+import Lists from './modules/Lists/index';
+import Assets from './modules/Assets/index';
 
 const state = {
   sidebarShow: 'responsive',
@@ -38,9 +45,14 @@ export default new Vuex.Store({
   modules : {
     dialog: DialogMessages,
     setting : Setting,
-    //
+    ReportChat : ReportChat,
+    ReportForm : ReportForm,
     auth : Auth,
-    
-
+    Dashboard2 :Dashboard2,
+    Dashboard : Dashboard,
+    History : History,
+    FilterOptions : FilterOptions,
+    Lists : Lists,
+    Assets: Assets,
   }
 });

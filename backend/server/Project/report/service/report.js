@@ -4,14 +4,32 @@ const resMsg = require("../../settings/service/message");
 const {  LLMChain } = require("langchain/chains");
 const { ChatOllama } = require("@langchain/community/chat_models/ollama");
 const { PromptTemplate } = require("@langchain/core/prompts");
-const { AgentExecutor, createOpenAIFunctionsAgent } = require("langchain/agents");
+
 const DisasterReport = require("../models/report.model");
 const DisasterReportGroup = require('../models/DisasterReportGroup.model');
 const UserTypeModel = require('../models/userType.model');
 // Vector Store Service 
 const axios = require('axios');
 const { OllamaEmbeddings } = require("@langchain/community/embeddings/ollama");
-const rateLimit = require('express-rate-limit');
+
+
+const multer = require('multer');
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/');
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, 
+    files: 10 
+  }
+});
 
 // Weaviate configuration
 const WEAVIATE_ENABLED = process.env.WEAVIATE_ENABLED === 'true';
@@ -47,10 +65,9 @@ async function bedrockLLM(prompt, options = {}) {
 
 
 
-console.log('Using Weaviate REST API directly');
-console.log('Weaviate base URL:', WEAVIATE_BASE_URL);
 
-// Initialize Ollama model (for LLMChain use)
+
+// Ollama model (for LLMChain use)
 const ollamaModel = new ChatOllama({
   baseUrl: process.env.OLLAMA_API_URL || "http://localhost:11434",
   model: "gemma3",
@@ -71,14 +88,10 @@ async function callLLM(prompt, options = {}) {
     return result.text;
   }
 }
-
+//Ollama embedding model
 const embeddings = new OllamaEmbeddings({
   model: "all-minilm",
 });
-
-// เพิ่ม import RAG service
-const rag = require('./aiservice');
-const userTypeModel = require('../models/userType.model');
 
 exports.onQuery = async function (request, response, next) {
     try {
@@ -175,111 +188,7 @@ exports.onDelete = async function (request, response, next) {
     }
     };
 
-exports.parseDisasterText = async (text) => {
-  try {
-    // ดึงรายการประเภทภัยพิบัติจาก database (ภาษาไทย)
-    const DisasterType = require('../models/disasterType.model');
-    const disasterTypes = await DisasterType.find({});
-    const typeList = disasterTypes
-      .map(t => t.title.find(tt => tt.key === 'th')?.value)
-      .filter(Boolean);
-    const typeListStr = typeList.map(t => `- ${t}`).join('\n');
 
-    const promptTemplate = `
-      คุณเป็นผู้เชี่ยวชาญในการแยกข้อมูลภัยพิบัติจากข้อความ
-      กรุณาแยกข้อมูลจากข้อความต่อไปนี้และตอบกลับในรูปแบบ JSON:
-
-      ประเภทภัยพิบัติที่อนุญาตให้เลือก มีดังนี้:
-      ${typeListStr}
-
-      ห้ามสร้างชื่อประเภทใหม่ ให้เลือกจากรายการข้างต้นเท่านั้น
-
-      ข้อความ: {text}
-
-      กรุณาตอบกลับในรูปแบบ JSON นี้เท่านั้น:
-      {
-        "disasterType": "เลือกจากรายการที่ให้เท่านั้น",
-        "userType": "ประเภทผู้ใช้ (เช่น: นักเรียน, อาจารย์, ประชาชนทั่วไป,เจ้าหน้าที่)",
-        "location": {
-          "address": "ที่อยู่เต็ม (เช่น: บ้านเลขที่ 123 หมู่ 4 ต.เวียง อ.เมือง จ.เชียงราย)",
-          "coordinates": [longitude, latitude] หรือ null ถ้าไม่มีพิกัด
-        },
-        "level": "ระดับความรุนแรง (เช่น: ต่ำ, กลาง, สูง, รุนแรง)",
-        "reasoning": "เหตุผลที่ทำให้เกิดภัยพิบัติหรือความรุนแรงนั้น",
-        "description": "รายละเอียดเพิ่มเติมหรือข้อความเดิม",
-        "contact": {
-          "name": "ชื่อผู้แจ้ง (ถ้ามีในข้อความ)",
-          "phone": "เบอร์โทร (ถ้ามีในข้อความ)"
-        }
-      }
-
-      หมายเหตุ:
-      - ต้องเลือกประเภทภัยพิบัติจากรายการที่ให้เท่านั้น ห้ามสร้างชื่อใหม่
-      - ถ้ามีข้อมูลสถานที่หรือที่อยู่ในข้อความ ให้แยก address ออกมาให้ละเอียดที่สุด แม้จะอยู่ในประโยคยาวหรือมีหลายประโยค
-      - address ต้องไม่เป็น null ถ้าไม่มีให้ใส่เป็นข้อความว่าง ""
-      - ถ้าไม่มีพิกัด ให้ใส่ null ใน coordinates
-      - ใช้ข้อความเดิมใน description ถ้าไม่มีรายละเอียดเพิ่มเติม
-      - ระบุประเภทภัยพิบัติให้ชัดเจน
-      - ประเมินระดับความรุนแรงจากคำที่ใช้ในข้อความ
-      - ถ้าพบเบอร์โทรหรือชื่อในข้อความ ให้แยกไปใส่ contact ด้วย
-      - ถ้าไม่มี contact ให้ใส่เป็นค่าว่าง
-      `;
-    let llmResponse;
-    if (useBedrock) {
-      // Replace {text} in prompt
-      const prompt = promptTemplate.replace('{text}', text);
-      llmResponse = await bedrockLLM(prompt, { maxTokens: 1000, temperature: 0.3 });
-      console.log('Bedrock AI raw response:', llmResponse);
-    } else {
-      // Use LLMChain as before
-      const prompt = new PromptTemplate({
-        template: promptTemplate,
-        inputVariables: ["text"]
-      });
-      const chain = new LLMChain({
-        llm: ollamaModel,
-        prompt: prompt
-      });
-      const result = await chain.call({ text });
-      llmResponse = result.text;
-      console.log('Ollama AI raw response:', llmResponse);
-    }
-    // Parse JSON response
-    const jsonMatch = llmResponse.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error('AI did not return JSON.');
-      throw new Error('ไม่สามารถแยกข้อมูลได้');
-    }
-    const parsedData = JSON.parse(jsonMatch[0]);
-    if (!parsedData.disasterType || !parsedData.description) {
-      console.error('AI JSON missing disasterType or description:', parsedData);
-      throw new Error('ข้อมูลไม่ครบถ้วน');
-    }
-    // เพิ่ม logic regex backend ดึงเบอร์โทรจาก description ถ้า AI ไม่แยก contact ให้
-    if (!parsedData.contact || !parsedData.contact.phone) {
-      const phoneMatch = parsedData.description.match(/(0[689]\d{8})/);
-      if (phoneMatch) {
-        if (!parsedData.contact) {
-          parsedData.contact = {};
-        }
-        parsedData.contact.phone = phoneMatch[1];
-      }
-    }
-    if (!parsedData.contact || !parsedData.contact.name) {
-      const nameMatch = parsedData.description.match(/ติดต่อ(?:คุณ)?([\wก-๙ ]{2,})/);
-      if (nameMatch) {
-        if (!parsedData.contact) {
-          parsedData.contact = {};
-        }
-        parsedData.contact.name = nameMatch[1].trim();
-      }
-    }
-    return parsedData;
-  } catch (error) {
-    console.error('Error parsing disaster text:', error);
-    throw new Error('ไม่สามารถแยกข้อมูลจากข้อความได้');
-  }
-};
 
 // Function to find matching disaster type from database
 exports.findMatchingDisasterType = async (disasterTypeText) => {
@@ -390,31 +299,290 @@ exports.getDefaultStatus = async () => {
 };
 
 
-exports.onCreateReport = async function (request, response, next) {
-  try {
-    let reportData = request.body;
+exports.classifyIntent = async function(text, chatHistory = []) {
+  let contextStr = '';
+  if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+    contextStr = 'ประวัติสนทนา:\n' +
+      chatHistory.slice(-10).map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`).join('\n') +
+      '\n';
+  }
+  const prompt = `
+    คุณคือผู้ช่วยอัจฉริยะที่มีหน้าที่ **จำแนก Intent ของข้อความ** ที่ผู้ใช้ส่งเข้ามาในระบบ **แจ้งเหตุฉุกเฉินและภัยพิบัติ**
 
-    // Fix: parse media if it's a string
-    if (typeof reportData.media === 'string') {
-      try {
-        reportData.media = JSON.parse(reportData.media);
-      } catch (e) {
-        reportData.media = [];
-      }
+    จงวิเคราะห์ข้อความ โดยใช้ทั้งข้อความล่าสุดและประวัติสนทนา (ถ้ามี) และตอบกลับด้วย **Intent ที่ตรงที่สุดเพียงหนึ่งคำ** เท่านั้น:
+    - แจ้งเหตุ
+    - ถามข้อมูล
+    - พูดคุย
+
+    **คำจำกัดความของ Intent:**
+    1. **แจ้งเหตุ** – ข้อความที่ระบุถึงเหตุการณ์ฉุกเฉิน เช่น การแจ้งไฟไหม้, น้ำท่วม, อุบัติเหตุ หรือกรณีที่ผู้ใช้กำลังให้ข้อมูลที่ AI ขอ เช่น ชื่อ, เบอร์โทร, สถานที่, รายละเอียด
+    2. **ถามข้อมูล** – ข้อความที่สอบถามข้อมูล เช่น สถานการณ์ปัจจุบัน, วิธีรับมือ, คำแนะนำ หรือสถิติ เช่น "ควรทำอย่างไรเมื่อเกิดน้ำท่วม"
+    3. **พูดคุย** – ข้อความทั่วไปที่ไม่เกี่ยวข้องกับการแจ้งเหตุหรือการสอบถาม เช่น "สวัสดี", "ขอบคุณ", "คุณชื่ออะไร"
+
+    **หลักการจำแนก Intent:**
+    - หากผู้ใช้กำลังตอบคำถามของ AI เกี่ยวกับข้อมูลเหตุการณ์ (ชื่อ, เบอร์, สถานที่ ฯลฯ) → ถือเป็น "แจ้งเหตุ"
+    - หากข้อความเริ่มต้นด้วยคำถาม หรือมีคำว่า "ควรทำอย่างไร", "ขอคำแนะนำ", "จะเอาตัวรอดอย่างไร" → ถือเป็น "ถามข้อมูล"
+    - หากเป็นข้อความทักทาย, ขอบคุณ, หรือคุยเล่น → ถือเป็น "พูดคุย"
+
+    ---
+    ตัวอย่าง:
+
+    [กรณี 1]  
+    ประวัติสนทนา:  
+    AI: กรุณาระบุรายละเอียดเหตุการณ์  
+    User: มีไฟไหม้ที่บ้าน  
+    Intent: แจ้งเหตุ
+
+    [กรณี 2]  
+    ประวัติสนทนา:  
+    AI: กรุณาระบุชื่อ  
+    User: บอย  
+    Intent: แจ้งเหตุ
+
+    [กรณี 3]  
+    ข้อความ: "วันนี้มีเหตุอะไรไหม"  
+    Intent: ถามข้อมูล
+
+    [กรณี 4]  
+    ข้อความ: "ขอบคุณมากครับ"  
+    Intent: พูดคุย
+
+    [กรณี 5]  
+    ข้อความ: "ไฟไหม้ที่ห้องพักเบอร์ 5 ชั้น 3 เบอร์ติดต่อ 0891234567"  
+    Intent: แจ้งเหตุ
+
+    ---
+    ${contextStr}ข้อความ: "${text}"
+
+    **ตอบกลับด้วยคำใดคำหนึ่งเท่านั้น:** แจ้งเหตุ, ถามข้อมูล, พูดคุย  
+    Intent:`;
+  const result = await callLLM(prompt);
+  if (result.includes('แจ้งเหตุ')) return 'report';
+  if (result.includes('ถามข้อมูล')) return 'query';
+  if (result.includes('พูดคุย')) return 'chat';
+  return 'unknown';
+};
+
+exports.parseDisasterText = async (text, location, media) => {
+  try {
+    const DisasterType = require('../models/disasterType.model');
+    const DisasterLevel = require('../models/disasterLevel.model');
+    const disasterTypes = await DisasterType.find({});
+    const disasterLevels = await DisasterLevel.find({});
+    const userType = await UserTypeModel.find({});
+    const Status = require('../models/status.model');
+    const statuses = await Status.find({});
+    const typeList = disasterTypes
+      .map(t => t.title.find(tt => tt.key === 'th')?.value)
+      .filter(Boolean);
+    const typeListStr = typeList.map(t => `- ${t}`).join('\n');
+
+    const levelList = disasterLevels
+      .map(l => l.title.find(tt => tt.key === 'th')?.value)
+      .filter(Boolean);
+    const levelListStr = levelList.map(l => `- ${l}`).join('\n');
+
+    const userTypeList = userType
+      .map(t => t.title.find(tt => tt.key === 'th')?.value)
+      .filter(Boolean);
+    const userTypeListStr = userTypeList.map(t => `- ${t}`).join('\n');
+
+    const statusList = statuses
+      .map(s => s.title.find(tt => tt.key === 'th')?.value)
+      .filter(Boolean);
+    const statusListStr = statusList.map(s => `- ${s}`).join('\n');
+
+    // Build location string for LLM prompt
+    let userCoordinatesStr = '';
+    if (location && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
+      userCoordinatesStr = `---\nพิกัดที่ผู้ใช้ส่งมา: [${location.coordinates[0]}, ${location.coordinates[1]}]\n---`;
+    }
+    // Build media string for LLM prompt
+    let userMediaStr = '';
+    if (Array.isArray(media) && media.length > 0) {
+      const mediaList = media.map((m, idx) => `ไฟล์ที่ ${idx+1}: ${m.name || m.src || '[unknown]'}`).join('\n');
+      userMediaStr = `---\nไฟล์รูปภาพที่ผู้ใช้แนบมา (${media.length} ไฟล์):\n${mediaList}\n---`;
     }
 
-    if (request.body.text) {
-      console.log('Parsing text input with AI:', request.body.text);
-      const parsedData = await exports.parseDisasterText(request.body.text);
+    const promptTemplate = `
+        🎯 คุณคือ LLM สำหรับแยกข้อมูลแจ้งเหตุฉุกเฉินในไทย
+        📝 งาน:
+        1. รับข้อความจากผู้ใช้
+        2. แยกข้อมูลเป็นฟิลด์ด้านล่าง
+        3. disasterType และ level ต้องเลือกจากรายการเท่านั้น ห้ามว่าง
+        4. status ต้องเป็น "รอดำเนินการ" เสมอ
+        5. หากไม่มีพิกัด → ใส่ [99.893572, 20.045000]
+        6. reasoning ต้องวิเคราะห์สาเหตุเองเสมอ ห้ามว่าง
+        7. ถ้าขาดข้อมูล → ใส่ "" หรือ null และเพิ่มชื่อฟิลด์ใน missingFields
+        8. ตอบกลับเป็น JSON ที่มีทุกฟิลด์
+
+        📋 รายการที่อนุญาต:
+        - disasterType: ${typeListStr}
+        - level: ${levelListStr}
+        - userType: ${userTypeListStr}
+        - status: ${statusListStr}
+
+        🧩 ฟิลด์:
+        - disasterType
+        - userType
+        - location (address, coordinates)
+        - level
+        - reasoning
+        - description
+        - contact (name, phone)
+        - status
+        - missingFields
+        - note (optional)
+
+        ❗ข้อจำกัด:
+        - ห้ามสร้างค่าใหม่
+        - missingFields ต้องตรงกับฟิลด์ที่ไม่มีข้อมูล (ยกเว้น 4 ฟิลด์บังคับด้านบน)
+
+        📦 ตอบเป็น JSON เท่านั้น เช่น:
+        {
+          "disasterType": "ไฟไหม้",
+          "userType": "เจ้าหน้าที่กู้ภัย",
+          "location": {"address": "", "coordinates": null},
+          "level": "สูง",
+          "reasoning": "เกิดจากการใช้เครื่องไฟฟ้าผิดวิธี",
+          "description": "ไฟไหม้หอพักแถวหน้ามอ",
+          "contact": {"name": "", "phone": ""},
+          "status": "รอดำเนินการ",
+          "missingFields": ["location.address", "contact.name", "contact.phone"],
+          "note": "กรุณาระบุที่อยู่และเบอร์โทร"
+        }
+
+        📨 ข้อความที่ต้องแยก: "${text}"
+        `;
+    let llmResponse;
+    if (useBedrock) {
+      const prompt = promptTemplate;
+      llmResponse = await bedrockLLM(prompt, { maxTokens: 1000, temperature: 0.3 });
+      console.log('Bedrock AI raw response:', llmResponse);
+    } else {
+      const prompt = new PromptTemplate({
+        template: promptTemplate,
+        inputVariables: []
+      });
+      const chain = new LLMChain({
+        llm: ollamaModel,
+        prompt: prompt
+      });
+      const result = await chain.call({});
+      llmResponse = result.text;
+      console.log('Ollama AI raw response:', llmResponse);
+    }
+    // ถ้า AI ตอบกลับเป็น JSON ให้ parse, ถ้าไม่ใช่ JSON ให้ return เป็นข้อความแจ้งเตือน
+    const jsonMatch = llmResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      // ตอบกลับเป็นข้อความแจ้งเตือน (AI ตัดสินใจเอง)
+      return { aiMessage: llmResponse.trim() };
+    }
+    const parsedData = JSON.parse(jsonMatch[0]);
+    return parsedData;
+  } catch (error) {
+    console.error('Error parsing disaster text:', error);
+    throw new Error('ไม่สามารถแยกข้อมูลจากข้อความได้');
+  }
+};
+
+exports.onCreateReport = [upload.array('media', 5), async function (request, response, next) {
+  console.log('==== onCreateReport CALLED ====');
+  console.log('RAW req.body:', request.body);
+  console.log('RAW req.files:', request.files);
+  try {
+    const text = request.body.text;
+    const location = request.body.location ? (typeof request.body.location === 'string' ? JSON.parse(request.body.location) : request.body.location) : undefined;
+    const chatHistory = request.body.chatHistory ? (typeof request.body.chatHistory === 'string' ? JSON.parse(request.body.chatHistory) : request.body.chatHistory) : [];
+    let media = [];
+    if (request.files && request.files.length > 0) {
+      media = request.files.map(f => ({
+        type: f.mimetype,
+        src: f.path,
+        name: f.originalname
+      }));
+    }
+    let reportData = {
+      text,
+      media,
+      location,
+      chatHistory
+    };
+    let intent = request.body.intent || 'query';
+    console.log('intent from request:', intent);
+    // ... (logic เดิมต่อไป) ...
+    if (intent === 'report') {
+      if (typeof reportData.media === 'string') {
+        try {
+          reportData.media = JSON.parse(reportData.media);
+        } catch (e) {
+          reportData.media = [];
+        }
+      }
+      let mergedText = '';
+      if (request.body.description || request.body.contact || (request.body.location && request.body.location.address)) {
+        // กรณีมาจากฟอร์ม
+        let desc = request.body.description || '';
+        let loc = '';
+        let contact = '';
+        try {
+          const locObj = request.body.location ? (typeof request.body.location === 'string' ? JSON.parse(request.body.location) : request.body.location) : undefined;
+          if (locObj && locObj.address) loc = `สถานที่: ${locObj.address}`;
+        } catch (e) {}
+        try {
+          const contactObj = request.body.contact ? (typeof request.body.contact === 'string' ? JSON.parse(request.body.contact) : request.body.contact) : undefined;
+          if (contactObj && (contactObj.name || contactObj.phone)) {
+            contact = `ผู้แจ้ง: ${contactObj.name || ''}, เบอร์: ${contactObj.phone || ''}`;
+          }
+        } catch (e) {}
+        mergedText = [desc, loc, contact].filter(Boolean).join(' | ');
+      } else {
+        // logic เดิม (chat)
+        let contextStr = '';
+        if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+          contextStr = 'ต่อไปนี้คือประวัติการสนทนาระหว่าง User กับ AI (ล่าสุดอยู่ล่างสุด):\n' +
+            chatHistory.map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`).join('\n') +
+            '\n---';
+        }
+        mergedText = [contextStr, text].filter(Boolean).join('\n');
+      }
+      // Fallback: ถ้า mergedText ยังว่าง ให้ใช้ text
+      if (!mergedText || mergedText.trim() === '') {
+        mergedText = text || '';
+      }
+      console.log('DEBUG mergedText:', mergedText);
+      const parsedData = await exports.parseDisasterText(mergedText, location, media);
+      parsedData.media = media;
+
+      // กรณี LLM แจ้งข้อมูลไม่ครบ
+      if (parsedData.aiMessage) {
+        const errorPrompt = `คุณเป็นผู้ช่วยแจ้งเตือน user เมื่อข้อมูลแจ้งเหตุไม่ครบถ้วน
+        ข้อความจาก AI: ${parsedData.aiMessage} กรุณาตอบกลับ user อย่างสุภาพและชัดเจน (1-2 ประโยค):`;
+        const aiErrorMsg = await callLLM(errorPrompt);
+        return response.status(400).json({
+          code: 40010,
+          data: null,
+          intent: 'report',
+          message: aiErrorMsg
+        });
+      }
+      // กรณี missingFields
+      if (parsedData.missingFields && Array.isArray(parsedData.missingFields) && parsedData.missingFields.length > 0) {
+        const errorPrompt = `คุณเป็นผู้ช่วยแจ้งเตือน user เมื่อข้อมูลแจ้งเหตุไม่ครบถ้วน\nข้อมูลที่ขาด: ${parsedData.missingFields.join(', ')}\nหมายเหตุ: ${parsedData.note || ''}\nกรุณาตอบกลับ user อย่างสุภาพและชัดเจน (1-2 ประโยค):`;
+        const aiErrorMsg = await callLLM(errorPrompt);
+        return response.status(400).json({
+          code: 40010,
+          data: null,
+          intent: 'report',
+          message: aiErrorMsg
+        });
+      }
+
       const disasterTypeId = await exports.findMatchingDisasterType(parsedData.disasterType);
       const disasterLevelId = await exports.findMatchingDisasterLevel(parsedData.level);
       let userTypeId = await exports.findMatchingUserType(parsedData.userType);
       const defaultStatusId = await exports.getDefaultStatus();
 
-      console.log('AI userType:', parsedData.userType);
-      console.log('userTypeId from DB:', userTypeId);
-
-      // Fallback: ถ้า userTypeId เป็น null หรือ undefined ให้หา default อีกครั้ง
       if (!userTypeId) {
         const UserTypeModel = require('../models/userType.model');
         const defaultUserType = await UserTypeModel.findOne({
@@ -429,7 +597,6 @@ exports.onCreateReport = async function (request, response, next) {
         }
       }
 
-      // ใช้ coordinates จาก frontend (browser) ถ้ามี, address ใช้ของ LLM เสมอถ้ามี
       let coordinates = undefined;
       let address = '';
       if (
@@ -445,7 +612,7 @@ exports.onCreateReport = async function (request, response, next) {
       ) {
         coordinates = parsedData.location.coordinates;
       } else {
-        coordinates = [0, 0];
+        coordinates = [99.893572, 20.045000]; // ค่า default
       }
 
       if (parsedData.location && typeof parsedData.location.address === 'string') {
@@ -458,7 +625,7 @@ exports.onCreateReport = async function (request, response, next) {
 
       reportData = {
         type: disasterTypeId,
-        user: userTypeId, // ✅ robust & log
+        user: userTypeId, 
         level: disasterLevelId,
         description: parsedData.description,
         reasoning: parsedData.reasoning,
@@ -476,47 +643,91 @@ exports.onCreateReport = async function (request, response, next) {
             by: request.body.by || undefined,
           },
         ],
-        media: request.body.media || [],
-        contact:
-          parsedData.contact && (parsedData.contact.name || parsedData.contact.phone)
-            ? {
-                ...(parsedData.contact.name !== undefined ? { name: parsedData.contact.name } : {}),
-                ...(parsedData.contact.phone !== undefined ? { phone: parsedData.contact.phone } : {}),
-                ...(parsedData.contact.email !== undefined ? { email: parsedData.contact.email } : {}),
-              }
-            : undefined,
+        media: parsedData.media, 
+        contact: parsedData.contact || {},
         assets: [],
       };
       console.log('Final reportData.user:', reportData.user);
       console.log('Parsed report data:', reportData);
-    }
 
-    const result = await Report.onCreateReport(reportData);
+      const result = await Report.onCreateReport(reportData);
 
-    if (result && result._id && WEAVIATE_ENABLED) {
+      // ====== สร้างข้อความสรุป case ด้วย LLM ======
+      let caseSummary = '';
       try {
-        const embedResult = await exports.upsertDisasterReportsToVectorStore([result]);
-        if (embedResult && embedResult.success) {
-          console.log('Report embedded to vector store successfully');
-        } else {
-          console.log('Vector embedding skipped - collection not available');
-        }
-      } catch (embedError) {
-        console.log('Vector store disabled or not available - skipping embedding');
+        const summaryPrompt = `คุณเป็นผู้ช่วยสรุปรายงานเหตุฉุกเฉิน/ภัยพิบัติให้ user ฟังอย่างกระชับและเข้าใจง่าย
+        โปรดขึ้นต้นด้วย รายงานของคุณถูกส่งให้เจ้าหน้าที่เรียบร้อยแล้วแล้วตามด้วยสรุปข้อมูลเหตุการณ์นี้ (1-2 ประโยค)
+        ข้อมูลรายงาน:
+        - ประเภท: ${parsedData.disasterType}
+        - สถานที่: ${address}
+        - รายละเอียด: ${parsedData.description}
+        - ผู้แจ้ง: ${(parsedData.contact && parsedData.contact.name) ? parsedData.contact.name : 'ไม่ระบุ'}
+        ตัวอย่าง:
+        รายงานของคุณถูกส่งให้เจ้าหน้าที่เรียบร้อยแล้ว เจ้าหน้าที่จะเร่งดำเนินการและติดต่อกลับโดยเร็วที่สุด สรุปเหตุการณ์ได้ดังนี้: 
+        เหตุการณ์นี้เป็นเหตุการณ์${parsedData.disasterType}ที่${address} รายละเอียด: ${parsedData.description}
+        กรุณาสรุป case นี้ให้ user ฟังเป็นภาษาไทย (1-2 ประโยค):`;
+        caseSummary = await callLLM(summaryPrompt);
+      } catch (e) {
+        caseSummary = 'รายงานของคุณถูกส่งให้เจ้าหน้าที่เรียบร้อยแล้ว';
       }
-    }
 
-    var resData = await resMsg.onMessage_Response(0, 20000);
-    resData.data = result;
-    resData.message = 'บันทึกข้อมูลสำเร็จ';
-    response.status(200).json(resData);
+      response.status(200).json({
+        code: 20000,
+        data: result,
+        message: caseSummary,
+        intent: 'report'
+      });
+      return;
+    } else if (intent === 'query') {
+      // ใช้ agent system แทนการเรียก LLM เดียว
+      const agentAnswer = await exports.queryWithAgents(text);
+      return response.status(200).json({
+        code: 20000,
+        data: { answer: agentAnswer },
+        intent: 'query',
+        message: agentAnswer
+      });
+    } else if (intent === 'chat') {
+      const prompt = `คุณเป็นผู้ช่วย AI ที่เป็นมิตรและตอบคำถามเกี่ยวกับภัยพิบัติและความปลอดภัย
+      คำแนะนำในการตอบ:
+      - ตอบสั้นๆ กระชับ (1-3 ประโยค)
+      - ใช้ภาษาที่เป็นมิตรและเข้าใจง่าย
+      - หากเป็นคำถามทั่วไป ให้ตอบอย่างสุภาพ
+      - หากเกี่ยวกับภัยพิบัติ ให้ให้คำแนะนำที่เป็นประโยชน์
+      - อย่าใช้คำพูดที่ซับซ้อนหรือเป็นทางการเกินไป
+
+      คำถาม: ${text}
+      คำตอบ:`;
+      const answer = await callLLM(prompt);
+      return response.status(200).json({
+        code: 20000,
+        data: { answer },
+        intent: 'chat',
+        message: answer
+      });
+    } else {
+      // intent unknown
+      const fallbackPrompt = `คุณเป็นผู้ช่วยแจ้ง user เมื่อระบบไม่เข้าใจข้อความ กรุณาตอบกลับ user อย่างสุภาพ (1-2 ประโยค): \"${text}\"`;
+      const fallbackMsg = await callLLM(fallbackPrompt);
+      return response.status(200).json({
+        code: 40000,
+        data: null,
+        intent: 'unknown',
+        message: fallbackMsg
+      });
+    }
   } catch (err) {
-    console.error('Error creating disaster report:', err);
+    console.error('ERROR in onCreateReport:', err);
+    const errorPrompt = `คุณเป็นผู้ช่วยแจ้ง user เมื่อเกิดข้อผิดพลาดในระบบ กรุณาตอบกลับ user อย่างสุภาพ (1-2 ประโยค): "${err.message}"`;
+    let aiErrorMsg = 'เกิดข้อผิดพลาดในการบันทึกข้อมูล';
+    try {
+      aiErrorMsg = await callLLM(errorPrompt);
+    } catch {}
     var resData = await resMsg.onMessage_Response(0, 40400);
-    resData.message = err.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล';
+    resData.message = aiErrorMsg;
     response.status(500).json(resData);
   }
-};
+}];
 
 exports.onQueryReport = async function (request, response, next) {
     try {
@@ -531,6 +742,125 @@ exports.onQueryReport = async function (request, response, next) {
         resData.message = 'ไม่สามารถดึงข้อมูลรายงานได้';
         response.status(500).json(resData);
     }
+};
+
+const formatReports = (reports) => {
+  const limitedReports = reports.slice(0, 10);
+  return limitedReports.map(report => 
+    `ประเภทภัยพิบัติ: ${report.type}
+    ประเภทผู้ใช้: ${report.userType}
+    สถานที่: ${report.location?.coordinates ? `พิกัด: ${report.location.coordinates[1]}, ${report.location.coordinates[0]}` : 'ไม่ระบุ'}
+    รายละเอียด: ${report.description}
+    เวลาที่รายงาน: ${report.timeStamps}
+    --------------------`
+  ).join('\n');
+};
+
+
+
+
+
+// ฟังก์ชันดึงรายงานล่าสุด
+async function getRecentReports(timeRange = '7d') {
+  try {
+    const DisasterReport = require('../models/report.model');
+    const now = new Date();
+    let startDate;
+    switch (timeRange) {
+      case '1d':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+    
+    // ดึงรายงานพร้อม populate ข้อมูลที่เกี่ยวข้อง
+    const reports = await DisasterReport.find({
+      timeStamps: { $gte: startDate }
+    })
+    .populate('type', 'title')
+    .populate('level', 'title')
+    .populate('userType', 'title')
+    .populate('status', 'title')
+    .sort({ timeStamps: -1 })
+    .limit(10)
+    .lean();
+    
+    // แปลงข้อมูลให้อยู่ในรูปแบบที่ต้องการ
+    return reports.map(report => ({
+      type: report.type?.title?.find(t => t.key === 'th')?.value || report.type?.title?.[0]?.value || 'ไม่ระบุ',
+      level: report.level?.title?.find(t => t.key === 'th')?.value || report.level?.title?.[0]?.value || 'ไม่ระบุ',
+      userType: report.userType?.title?.find(t => t.key === 'th')?.value || report.userType?.title?.[0]?.value || 'ไม่ระบุ',
+      description: report.description || 'ไม่ระบุ',
+      location: report.location || {},
+      timeStamps: report.timeStamps,
+      status: report.status?.title?.find(t => t.key === 'th')?.value || report.status?.title?.[0]?.value || 'ไม่ระบุ'
+    }));
+    
+  } catch (error) {
+    console.error('Error getting recent reports:', error);
+    return [];
+  }
+}
+
+// ฟังก์ชันหลักสำหรับ query ด้วย LLM เดียว
+exports.queryWithAgents = async function(question) {
+  try {
+    console.log('Query with single LLM:', question);
+    
+    // ดึงข้อมูลรายงานล่าสุด 7 วัน
+    const timeRange = '7d';
+    const reports = await getRecentReports(timeRange);
+    
+    if (!reports || reports.length === 0) {
+      return 'ไม่พบรายงานภัยพิบัติในช่วง 7 วันที่ผ่านมา';
+    }
+    
+    // สร้างข้อมูลสำหรับ LLM พร้อมวันที่ปัจจุบัน
+    const currentDate = new Date().toLocaleDateString('th-TH');
+    const reportsData = reports.map((report, index) => {
+      const timeStr = new Date(report.timeStamps).toLocaleString('th-TH');
+      const reportDate = new Date(report.timeStamps).toLocaleDateString('th-TH');
+      const isToday = reportDate === currentDate;
+      const dateLabel = isToday ? 'วันนี้' : reportDate;
+      
+      return `${index + 1}. ประเภท: ${report.type} | ระดับ: ${report.level} | สถานที่: ${report.location?.address || 'ไม่ระบุ'} | รายละเอียด: ${report.description} | วันที่: ${dateLabel} | เวลา: ${timeStr}`;
+    }).join('\n');
+    
+    // สร้าง prompt สำหรับ LLM เดียว
+    const prompt = `คุณเป็นผู้เชี่ยวชาญในการตอบคำถามเกี่ยวกับรายงานภัยพิบัติ
+
+      วันที่ปัจจุบัน: ${currentDate}
+
+      ข้อมูลรายงานภัยพิบัติล่าสุด 10 รายการ:
+      ${reportsData}
+
+      คำถาม: ${question}
+
+      กรุณาตอบคำถามให้กระชับ สุภาพ และตรงประเด็น โดย:
+      1. วิเคราะห์คำถามและเลือกข้อมูลที่เกี่ยวข้อง
+      2. จัดกลุ่มข้อมูลตามประเภทภัยพิบัติ (ถ้าจำเป็น)
+      3. เน้นย้ำเหตุการณ์ระดับสูงหรือสำคัญ
+      4. ให้สถิติที่เกี่ยวข้อง (ถ้ามี)
+      5. ตอบกลับเป็นภาษาไทยที่เข้าใจง่าย
+      6. ระบุวันที่ให้ชัดเจน (วันนี้, เมื่อวาน, หรือวันที่เฉพาะ)
+      7. อย่าขัดแย้งกันเองในการอธิบายวันที่
+
+      คำตอบ:`;
+    
+    const answer = await callLLM(prompt);
+    return answer;
+    
+  } catch (error) {
+    console.error('Error in queryWithAgents:', error);
+    return 'ขออภัย เกิดข้อผิดพลาดในการค้นหาข้อมูล';
+  }
 };
 
 exports.getReportsByType = async function (request, response, next) {
@@ -660,6 +990,37 @@ exports.addAssetsToReport = async function (request, response, next) {
         return response.status(404).json(resData);
     }
 };
+
+// Replace the entire assets array for a given report
+exports.setAssetsInReport = async function (request, response, next) {
+    try {
+        const { id } = request.params;
+        const { assets } = request.body || {};
+
+        if (!mongo.ObjectId.isValid(id)) {
+            const resData = await resMsg.onMessage_Response(0, 40000);
+            return response.status(400).json(resData);
+        }
+
+        // Normalize assets: keep only { id, amount }
+        const normalizedAssets = Array.isArray(assets)
+            ? assets.filter(a => a && a.id && typeof a.amount === 'number')
+            : [];
+
+        const query = { _id: new mongo.ObjectId(id) };
+        const updateData = { $set: { assets: normalizedAssets } };
+
+        const doc = await Report.onUpdate(query, updateData);
+        const resData = await resMsg.onMessage_Response(0, 20000);
+        resData.data = doc;
+        resData.message = 'อัปเดตทรัพย์สินของรายงานสำเร็จ';
+        return response.status(200).json(resData);
+    } catch (err) {
+        const resData = await resMsg.onMessage_Response(0, 40400);
+        resData.message = 'ไม่สามารถอัปเดตทรัพย์สินของรายงานได้';
+        return response.status(404).json(resData);
+    }
+};
 exports.getReportsByLocation = async function (request, response, next) {
     try {
         const { lat, lng, radius = 10 } = request.query;
@@ -672,7 +1033,7 @@ exports.getReportsByLocation = async function (request, response, next) {
 
         const reports = await DisasterReport.find({
             'location.lat': {
-                $gte: parseFloat(lat) - (radius / 111), // 1 degree ≈ 111 km
+                $gte: parseFloat(lat) - (radius / 111), 
                 $lte: parseFloat(lat) + (radius / 111)
             },
             'location.lng': {
@@ -693,260 +1054,94 @@ exports.getReportsByLocation = async function (request, response, next) {
     }
 };
 
-// ลบ analyzeReports ที่ใช้ openAIModel ออก (ถ้าต้องการ LLM summary ให้ใช้ bedrockLLM หรือ ollamaModel ผ่าน LLMChain แทน)
-exports.analyzeReports = async (reports) => {
-  return "ฟังก์ชันนี้ถูกปิดการใช้งาน (ใช้ bedrock หรือ ollama LLM โดยตรงแทน)";
-};
 
-const formatReports = (reports) => {
-  const limitedReports = reports.slice(0, 10);
-  return limitedReports.map(report => 
-    `ประเภทภัยพิบัติ: ${report.type}
-    ประเภทผู้ใช้: ${report.userType}
-    สถานที่: ${report.location?.coordinates ? `พิกัด: ${report.location.coordinates[1]}, ${report.location.coordinates[0]}` : 'ไม่ระบุ'}
-    รายละเอียด: ${report.description}
-    เวลาที่รายงาน: ${report.timeStamps}
-    --------------------`
-  ).join('\n');
-};
 
-const agents = {
-  reader: {
-    name: "reader_agent",
-    description: "อ่านและสรุปข้อมูลรายงานภัยพิบัติ",
-    func: async (reports, question) => {
-      const prompt = new PromptTemplate({
-        template: `คุณเป็นผู้เชี่ยวชาญในการอ่านและสรุปข้อมูลภัยพิบัติ
-        หน้าที่ของคุณคืออ่านรายงานภัยพิบัติและตอบคำถามให้ตรงประเด็น
-
-        คำถาม: {question}
-
-        ข้อมูลรายงานภัยพิบัติ:
-        {reports}
-
-        กรุณาตอบคำถามให้กระชับและตรงประเด็น:`,
-        inputVariables: ["reports", "question"]
-      });
-
-      if (useBedrock) {
-        // Use Bedrock LLM
-        const promptStr = prompt.template
-          .replace('{reports}', formatReports(reports))
-          .replace('{question}', question);
-        return await bedrockLLM(promptStr, { maxTokens: 1000, temperature: 0.3 });
-      } else {
-        const chain = new LLMChain({
-          llm: ollamaModel,
-          prompt: prompt
-        });
-        const result = await chain.call({
-          reports: formatReports(reports),
-          question: question
-        });
-        return result.text;
-      }
-    }
-  },
-
-  analyzer: {
-    name: "analyzer_agent",
-    description: "วิเคราะห์แนวโน้มและรูปแบบของภัยพิบัติ",
-    func: async (reports, question) => {
-      const prompt = new PromptTemplate({
-        template: `คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์แนวโน้มภัยพิบัติ
-        หน้าที่ของคุณคือวิเคราะห์รูปแบบและแนวโน้มของภัยพิบัติ
-
-        คำถาม: {question}
-
-        ข้อมูลรายงานภัยพิบัติ:
-        {reports}
-
-        กรุณาวิเคราะห์และตอบคำถามให้กระชับ:`,
-        inputVariables: ["reports", "question"]
-      });
-
-      if (useBedrock) {
-        const promptStr = prompt.template
-          .replace('{reports}', formatReports(reports))
-          .replace('{question}', question);
-        return await bedrockLLM(promptStr, { maxTokens: 1000, temperature: 0.3 });
-      } else {
-        const chain = new LLMChain({
-          llm: ollamaModel,
-          prompt: prompt
-        });
-        const result = await chain.call({
-          reports: formatReports(reports),
-          question: question
-        });
-        return result.text;
-      }
-    }
-  },
-
-  advisor: {
-    name: "advisor_agent",
-    description: "ให้คำแนะนำในการป้องกันและรับมือกับภัยพิบัติ",
-    func: async (reports, question) => {
-      const prompt = new PromptTemplate({
-        template: `คุณเป็นผู้เชี่ยวชาญในการให้คำแนะนำเกี่ยวกับภัยพิบัติ
-        หน้าที่ของคุณคือให้คำแนะนำในการป้องกันและรับมือกับภัยพิบัติ
-
-        คำถาม: {question}
-
-        ข้อมูลรายงานภัยพิบัติ:
-        {reports}
-
-        กรุณาให้คำแนะนำที่กระชับและตรงประเด็น:`,
-        inputVariables: ["reports", "question"]
-      });
-
-      if (useBedrock) {
-        const promptStr = prompt.template
-          .replace('{reports}', formatReports(reports))
-          .replace('{question}', question);
-        return await bedrockLLM(promptStr, { maxTokens: 1000, temperature: 0.3 });
-      } else {
-        const chain = new LLMChain({
-          llm: ollamaModel,
-          prompt: prompt
-        });
-        const result = await chain.call({
-          reports: formatReports(reports),
-          question: question
-        });
-        return result.text;
-      }
-    }
+// ====== Time context extraction ======
+function extractTimeContext(question) {
+  const q = question.toLowerCase();
+  const now = new Date();
+  let startDate, endDate;
+  endDate = new Date(now);
+  if (/วันนี้|today/.test(q)) {
+    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    return { startDate, endDate };
   }
-};
-
-// Create the main agent that coordinates other agents
-const createMainAgent = async () => {
-  const tools = Object.values(agents).map(agent => ({
-    name: agent.name,
-    description: agent.description,
-    func: agent.func
-  }));
-
-  const prompt = new PromptTemplate({
-    template: `คุณเป็นผู้ประสานงานในการวิเคราะห์ข้อมูลภัยพิบัติ
-    หน้าที่ของคุณคือประสานงานกับผู้เชี่ยวชาญแต่ละด้านเพื่อตอบคำถามให้ตรงประเด็น
-
-    คำถาม: {question}
-
-    ข้อมูลรายงานภัยพิบัติ:
-    {reports}
-
-    กรุณาประสานงานกับผู้เชี่ยวชาญเพื่อตอบคำถามให้กระชับและตรงประเด็น:
-    {agent_scratchpad}`,
-    inputVariables: ["reports", "question", "agent_scratchpad"]
-  });
-
-  if (useBedrock) {
-    // Not supported: createOpenAIFunctionsAgent with Bedrock (custom agent logic needed)
-    // For now, fallback to single bedrockLLM call
-    return null;
-  } else {
-    return await createOpenAIFunctionsAgent({
-      llm: ollamaModel,
-      tools: tools,
-      prompt: prompt
-    });
+  if (/เมื่อวาน|yesterday/.test(q)) {
+    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return { startDate, endDate };
   }
-};
+  if (/สัปดาห์|week/.test(q)) {
+    startDate = new Date(now);
+    startDate.setDate(now.getDate() - 7);
+    return { startDate, endDate };
+  }
+  if (/เดือน|month/.test(q)) {
+    startDate = new Date(now);
+    startDate.setMonth(now.getMonth() - 1);
+    return { startDate, endDate };
+  }
+  // default: 7 วันล่าสุด
+  startDate = new Date(now);
+  startDate.setDate(now.getDate() - 7);
+  return { startDate, endDate };
+}
 
-// Main function to analyze disaster reports
 exports.analyzeDisasterReports = async (timeRange = '7d', question = '') => {
   try {
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 7);
+    const { startDate, endDate } = extractTimeContext(question);
 
     const reports = await DisasterReport.find({
       timeStamps: {
         $gte: startDate,
         $lte: endDate
       }
-    }).sort({ timeStamps: -1 }).limit(10);
+    }).sort({ timeStamps: -1 }).limit(50);
 
     if (reports.length === 0) {
       return "ไม่พบรายงานภัยพิบัติในช่วงเวลาที่กำหนด";
     }
 
-    const mainAgent = await createMainAgent();
-    if (useBedrock || !mainAgent) {
-      // Fallback: single bedrockLLM call (no agent tool coordination)
-      const prompt = `คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลภัยพิบัติ\nคำถาม: ${question}\nข้อมูลรายงานภัยพิบัติ:\n${formatReports(reports)}\nกรุณาตอบคำถามให้กระชับและตรงประเด็น:`;
-      return await bedrockLLM(prompt, { maxTokens: 1000, temperature: 0.3 });
-    } else {
-      const agentExecutor = new AgentExecutor({
-        agent: mainAgent,
-        tools: Object.values(agents).map(agent => ({
-          name: agent.name,
-          description: agent.description,
-          func: agent.func
-        })),
-        verbose: true
-      });
-      const result = await agentExecutor.invoke({
-        reports: formatReports(reports),
-        question: question
-      });
-      return result.output;
+    // ====== AGENT LOGIC ======
+    const field = classifyField(question);
+    let agentAnswer = null;
+    if (field === 'description') {
+      agentAnswer = await descriptionAgent(reports, question);
+    } else if (field === 'level') {
+      agentAnswer = await levelAgent(reports, question);
+    } else if (field === 'address') {
+      agentAnswer = await addressAgent(reports, question);
     }
+
+    // ====== Fallback LLM เสมอ โดยใช้คำตอบ agent เป็น context ======
+    let prompt;
+    if (agentAnswer) {
+      prompt = `คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลภัยพิบัติ\n
+      คำถาม: ${question}\nข้อมูลที่ได้จากระบบอัตโนมัติ: ${agentAnswer}\n
+      ข้อมูลรายงานภัยพิบัติ:\n
+      ${formatReports(reports)}\n
+      กรุณาตอบคำถามให้กระชับและตรงประเด็น:`;
+    } else {
+      prompt = `คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลภัยพิบัติ\n
+      คำถาม: ${question}\n
+      ข้อมูลรายงานภัยพิบัติ:\n
+      ${formatReports(reports)}\n
+      กรุณาตอบคำถามให้กระชับและตรงประเด็น:`;
+    }
+    const answer = await bedrockLLM ? await bedrockLLM(prompt, { maxTokens: 1000, temperature: 0.3 }) : (await (new LLMChain({ llm: ollamaModel, prompt: new PromptTemplate({ template: prompt, inputVariables: [] }) })).call({})).text;
+    return answer;
   } catch (error) {
     console.error('Error analyzing disaster reports:', error);
     throw new Error('ไม่สามารถวิเคราะห์ข้อมูลได้');
   }
 };
 
-// Function to get specific insights about a disaster type
-exports.getDisasterTypeInsights = async (disasterType, question = '') => {
-  try {
-    const reports = await DisasterReport.find({
-      type: disasterType
-    }).sort({ timeStamps: -1 }).limit(10);
-
-    if (reports.length === 0) {
-      return `ไม่พบรายงานเกี่ยวกับภัยพิบัติประเภท ${disasterType}`;
-    }
-
-    const mainAgent = await createMainAgent();
-    if (useBedrock || !mainAgent) {
-      const prompt = `คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลภัยพิบัติประเภท ${disasterType}\nคำถาม: ${question}\nข้อมูลรายงานภัยพิบัติ:\n${formatReports(reports)}\nกรุณาตอบคำถามให้กระชับและตรงประเด็น:`;
-      return await bedrockLLM(prompt, { maxTokens: 1000, temperature: 0.3 });
-    } else {
-      const agentExecutor = new AgentExecutor({
-        agent: mainAgent,
-        tools: Object.values(agents).map(agent => ({
-          name: agent.name,
-          description: agent.description,
-          func: agent.func
-        })),
-        verbose: true
-      });
-      const result = await agentExecutor.invoke({
-        reports: formatReports(reports),
-        question: question
-      });
-      return result.output;
-    }
-  } catch (error) {
-    console.error('Error getting disaster type insights:', error);
-    throw new Error('ไม่สามารถวิเคราะห์ข้อมูลได้');
-  }
-};
-
 // ==================== VECTOR STORE SERVICE FUNCTIONS ====================
-
-// Removed automatic class creation - class must be created manually in Weaviate
 
 async function upsertDisasterReportsToVectorStore(reports) {
   try {
     console.log('Upserting reports to vector store using REST API...');
-    
-    // Check if class exists
     try {
       const schemaResponse = await axios.get(`${WEAVIATE_BASE_URL}/schema`);
       const classes = schemaResponse.data.classes || [];
@@ -1067,16 +1262,9 @@ async function searchDisasterReports(query, topK = 5) {
   }
 }
 
-const reportLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 นาที
-  max: 3, // 3 requests ต่อ window ต่อ IP
-  message: 'คุณแจ้งรายงานบ่อยเกินไป กรุณารอสักครู่'
-});
-
 // Export vector store functions
 exports.upsertDisasterReportsToVectorStore = upsertDisasterReportsToVectorStore;
 exports.searchDisasterReports = searchDisasterReports;
-exports.reportLimiter = reportLimiter;
 
 // ==================== VECTOR DB UTILITY FUNCTIONS ====================
 
@@ -1121,7 +1309,7 @@ exports.getVectorDBStats = async function() {
   }
 };
 
-// ==================== EMBED ALL REPORTS FUNCTION ====================
+
 
 exports.embedAllReports = async function() {
   try {
@@ -1137,9 +1325,9 @@ exports.embedAllReports = async function() {
 
 /**
  * รวมรายงานภัยพิบัติหลายอันเข้าเป็นกลุ่มเดียวกัน
- * @param {Array<string>} reportIds - รายการ _id ของรายงานที่ต้องการรวม
- * @param {Object} options - { name, description, createdBy }
- * @returns {Promise<Object>} group document
+ * @param {Array<string>} reportIds 
+ * @param {Object} options 
+ * @returns {Promise<Object>} 
  */
 exports.groupReports = async function (reportIds, options = {}) {
   if (!Array.isArray(reportIds) || reportIds.length < 2) {
@@ -1256,48 +1444,103 @@ exports.createReportWithDefaultTypeLevelHandler = async function (req, res) {
   }
 };
 
-exports.groupReportsRouteHandler = (req, res) => {
-  res.status(501).json({ success: false, message: 'Not implemented: groupReportsRouteHandler' });
-};
-exports.analyzeDisasterReportsRouteHandler = (req, res) => {
-  res.status(501).json({ success: false, message: 'Not implemented: analyzeDisasterReportsRouteHandler' });
-};
-exports.embedAllReportsRouteHandler = (req, res) => {
-  res.status(501).json({ success: false, message: 'Not implemented: embedAllReportsRouteHandler' });
-};
-exports.searchDisasterReportsRouteHandler = (req, res) => {
-  res.status(501).json({ success: false, message: 'Not implemented: searchDisasterReportsRouteHandler' });
+
+
+exports.openCaseHandler = async function (request, response, next) {
+    try {
+        const reportId = request.params.id;
+        const { userName, reason } = request.body;
+
+        if (!userName) {
+            return response.status(400).json({
+                success: false,
+                message: 'ต้องระบุ userName'
+            });
+        }
+
+        const result = await Report.openCase(reportId, userName, reason);
+        
+        if (!result) {
+            return response.status(404).json({
+                success: false,
+                message: 'ไม่พบรายงานที่ระบุ'
+            });
+        }
+
+        return response.status(200).json({
+            success: true,
+            message: 'เปิดเคสสำเร็จ',
+            data: result
+        });
+    } catch (error) {
+        console.error('Error opening case:', error);
+        return response.status(500).json({
+            success: false,
+            message: 'เกิดข้อผิดพลาดในการเปิดเคส',
+            error: error.message
+        });
+    }
 };
 
-// Update only contact info by report ID
-exports.updateContact = async function (request, response, next) {
-  try {
-    const { id } = request.params;
-    const { contact } = request.body;
-    const { ObjectId } = require('mongodb');
-    console.log('updateContact called', { id, contact });
-    if (!id || !contact) {
-      response.statusCode = 400;
-      return response.json({ success: false, message: 'Missing id or contact' });
+exports.closeCaseHandler = async function (request, response, next) {
+    try {
+        const reportId = request.params.id;
+        const { userName, reason } = request.body;
+
+        if (!userName) {
+            return response.status(400).json({
+                success: false,
+                message: 'ต้องระบุ userName'
+            });
+        }
+
+        const result = await Report.closeCase(reportId, userName, reason);
+        
+        if (!result) {
+            return response.status(404).json({
+                success: false,
+                message: 'ไม่พบรายงานที่ระบุ'
+            });
+        }
+
+        return response.status(200).json({
+            success: true,
+            message: 'ปิดเคสสำเร็จ',
+            data: result
+        });
+    } catch (error) {
+        console.error('Error closing case:', error);
+        return response.status(500).json({
+            success: false,
+            message: 'เกิดข้อผิดพลาดในการปิดเคส',
+            error: error.message
+        });
     }
-    if (!ObjectId.isValid(id)) {
-      response.statusCode = 400;
-      return response.json({ success: false, message: 'Invalid id format' });
-    }
-    const updated = await DisasterReport.findByIdAndUpdate(
-      id,
-      { contact },
-      { new: true }
-    );
-    if (!updated) {
-      response.statusCode = 404;
-      return response.json({ success: false, message: 'Report not found' });
-    }
-    response.statusCode = 200;
-    response.json({ success: true, data: updated });
-  } catch (err) {
-    console.error('updateContact error:', err);
-    response.statusCode = 500;
-    response.json({ success: false, message: err.message });
-  }
 };
+
+exports.getCaseHistoryHandler = async function (request, response, next) {
+    try {
+        const reportId = request.params.id;
+        const result = await Report.getCaseHistory(reportId);
+        
+        if (!result) {
+            return response.status(404).json({
+                success: false,
+                message: 'ไม่พบรายงานที่ระบุ'
+            });
+        }
+
+        return response.status(200).json({
+            success: true,
+            data: result.caseManagement
+        });
+    } catch (error) {
+        console.error('Error getting case history:', error);
+        return response.status(500).json({
+            success: false,
+            message: 'เกิดข้อผิดพลาดในการดึงประวัติเคส',
+            error: error.message
+        });
+    }
+};
+

@@ -1,14 +1,8 @@
 <template>
   <CCard class="bg-style2">
-<!--    <CCardHeader class="bg-gradient-danger text-white" style="border-top-left-radius: 1rem; border-top-right-radius: 1rem ">-->
-<!--      <span class="font-weight-bold h6"><CIcon name="cil-building" size="lg"/> {{ caption }}</span>-->
-<!--      <div class="card-header-actions">-->
-<!--      </div>-->
-<!--    </CCardHeader>-->
-
     <CCardBody>
       <GmapMap
-        :center="center"
+        :center="mapCenter"
         :zoom="14"
         style="height: 400px"
         @click='addMarker'
@@ -22,19 +16,29 @@
          disableDefaultUI: false
        }"
       >
-<!--        <GmapInfoWindow :options="infoOptions" :position="infoWindowPos" :opened="infoWinOpen" @closeclick="infoWinOpen=false">-->
-<!--          <CLink :href="infoLink" target="_blank">{{infoContent}}</CLink>-->
-<!--        </GmapInfoWindow>-->
         <GmapMarker
           :key="index"
-          v-for="(m, index) in markers"
+          v-for="(m, index) in mapMarkers"
           :position="m.position"
           :label="m.label"
           :title="m.title"
           :clickable="true"
           :draggable="m.draggable"
-          @click="toggleInfoWindow(m, index)"
+          @click="handleToggleInfoWindow(m, index)"
         />
+        
+        <GmapInfoWindow
+          :options="infoOptions"
+          :position="infoWindowPos"
+          :opened="infoWinOpen"
+          @closeclick="closeInfoWindow"
+        >
+          <div>
+            <h6>{{ infoContent }}</h6>
+            <p>{{ displayAddress }}</p>
+            <a v-if="infoLink" :href="infoLink" target="_blank">ดูรายละเอียด</a>
+          </div>
+        </GmapInfoWindow>
       </GmapMap>
     </CCardBody>
   </CCard>
@@ -43,107 +47,151 @@
 <script>
 import * as VueGoogleMaps from 'vue2-google-maps'
 import Vue from 'vue'
+import { mapGetters } from 'vuex';
 
 Vue.use(VueGoogleMaps, {
   load: {
     key: 'AIzaSyASyYRBZmULmrmw_P9kgr7_266OhFNinPA'
-    // key: ''
-    // To use the Google Maps JavaScript API, you must register your app project on the Google API Console and get a Google API key which you can add to your app
-    // v: 'OPTIONAL VERSION NUMBER',
-    // libraries: 'places', //// If you need to use place input
   }
 })
 
 export default {
   name: 'google-maps',
   props: {
-    lat: { type: Number, default: null },
-    lng: { type: Number, default: null },
-    location: { type: Object, default: null }, // รองรับ object {lat, lng}
+
   },
-  data () {
+
+  data() {
     return {
-      center: {lng: 99.893572,lat: 20.045000},
-      markers: [],
+      geocoder: null,
+      mapMarkers: [],
       infoContent: '',
       infoLink: '',
-      infoWindowPos: {
-        lat: 0,
-        lng: 0
-      },
+      infoWindowPos: { lat: 0, lng: 0 },
       infoWinOpen: false,
       currentMidx: null,
-      // optional: offset infowindow so it visually sits nicely on top of our marker
       infoOptions: {
-        pixelOffset: {
-          width: 0,
-          height: -35
-        }
+        pixelOffset: { width: 0, height: -35 }
       },
+      mapCenter: { lng: 99.893572, lat: 20.045000 },
+      displayAddress: 'ไม่ระบุที่อยู่'
     }
   },
-  watch: {
-    lat: 'updateMap',
-    lng: 'updateMap',
-    location: {
-      handler: 'updateMap',
-      deep: true
-    }
+
+  created() {
+    this.onInit();
   },
-  mounted() {
-    this.updateMap();
-  },
+
   methods: {
-    updateMap() {
-      let lat = this.lat;
-      let lng = this.lng;
-      if (this.location && typeof this.location.lat === 'number' && typeof this.location.lng === 'number') {
-        lat = this.location.lat;
-        lng = this.location.lng;
+    onInit() {
+      this.updateMapFromCaseData();
+    },
+
+    updateMapFromCaseData() {
+      this.updateDisplayData();
+      this.updateMapMarkers();
+      this.$emit('map-updated', { 
+        location: this.caseData?.location 
+      });
+    },
+
+    // อัพเดท local data จาก caseData
+    updateDisplayData() {
+      if (this.caseData && this.caseData.location) {
+        const location = this.caseData.location;
+        if (location.coordinates && location.coordinates.length === 2) {
+          this.mapCenter = {
+            lng: location.coordinates[0],
+            lat: location.coordinates[1]
+          };
+        } else {
+          this.mapCenter = { lng: 99.893572, lat: 20.045000 };
+        }
+        this.displayAddress = location.address || 'ไม่ระบุที่อยู่';
+      } else {
+        this.mapCenter = { lng: 99.893572, lat: 20.045000 };
+        this.displayAddress = 'ไม่ระบุที่อยู่';
       }
-      if (typeof lat === 'number' && typeof lng === 'number') {
-        this.center = { lat, lng };
-        this.markers = [{
-          position: { lat, lng },
+    },
+
+    updateMapMarkers() {
+      if (this.caseData && this.caseData.location && this.caseData.location.coordinates && this.caseData.location.coordinates.length === 2) {
+        const coordinates = this.caseData.location.coordinates;
+        this.mapMarkers = [{
+          position: { 
+            lat: coordinates[1], 
+            lng: coordinates[0] 
+          },
           label: 'C',
           draggable: false,
           title: 'ตำแหน่งเหตุการณ์',
         }];
-      }
-    },
-    toggleInfoWindow (marker, idx) {
-      this.infoWindowPos = marker.position
-      this.infoContent = marker.title
-      this.infoLink = marker.www
-      // check if its the same marker that was selected if yes toggle
-      if (this.currentMidx === idx) {
-        this.infoWinOpen = !this.infoWinOpen
       } else {
-        // if different marker set infowindow to open and reset current marker index
-        this.currentMidx = idx
-        this.infoWinOpen = true
+        this.mapMarkers = [];
       }
     },
+
+    handleToggleInfoWindow(marker, idx) {
+      this.infoWindowPos = marker.position;
+      this.infoContent = marker.title;
+      this.infoLink = marker.www;
+      
+      if (this.currentMidx === idx) {
+        this.infoWinOpen = !this.infoWinOpen;
+      } else {
+        this.currentMidx = idx;
+        this.infoWinOpen = true;
+      }
+      
+      this.$emit('info-window-toggled', { marker, idx });
+    },
+
+    closeInfoWindow() {
+      this.infoWinOpen = false;
+      this.currentMidx = null;
+    },
+
     addMarker(event) {
       const marker = {
         lat: event.latLng.lat(),
         lng: event.latLng.lng(),
-
       };
       console.log(marker);
-      // this.markers.push({ position: marker });
-      // this.$refs.mmm.panTo(marker);
-      //this.center = marker;
-
-
       this.geocoder = new google.maps.Geocoder();
       this.geocoder.geocode({'location': event.latLng}, (results, status) => {
-        // showing how you would grab the first address...
-        const firstAddress = results[0].formatted_address;
-
-        eventBus.$emit('mapAddress', results);
+        if (status === 'OK') {
+          if (results[0]) {
+            console.log('Address:', results[0].formatted_address);
+            this.$emit('marker-added', {
+              position: marker,
+              address: results[0].formatted_address
+            });
+          }
+        } else {
+          console.error('Geocoder failed due to:', status);
+        }
       });
+    }
+  },
+
+  computed: {
+    ...mapGetters({
+      // lang: 'setting/lang',
+      // รับข้อมูลโดยตรงจาก Dashboard2 store
+      caseData: 'Dashboard2/case',
+    })
+  },
+
+  watch: {
+    caseData: function (value) {
+      var lang = this.$store.getters['setting/lang'];
+      this.updateMapFromCaseData();
     },
+
+    // lang: function (value) {
+    //   var lang = this.$store.getters['setting/lang'];
+    //   this.$emit('language-changed', value);
+    // }
   }
 }
 </script>

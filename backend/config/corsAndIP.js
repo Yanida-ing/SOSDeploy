@@ -2,7 +2,13 @@
 const cors = require('cors');
 
 // กำหนดโดเมนและ IP ที่อนุญาต
-const allowedDomains = ['https://example.com', 'https://anotherdomain.com'];
+const allowedDomains = [
+  'http://localhost:8081',
+  'http://localhost:8080',
+  'https://sos.mfu.ac.th/',
+  'https://example.com',
+  'https://anotherdomain.com'
+];
 const allowedIPs = ['192.168.1.1', '203.0.113.5','127.0.0.1'];
 
 // การตั้งค่า CORS

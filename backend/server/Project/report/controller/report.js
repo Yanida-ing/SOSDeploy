@@ -194,3 +194,118 @@ exports.onQueryReport = async function () {
             });
     });
 };
+
+// เพิ่ม methods สำหรับ case management
+exports.openCase = async function (reportId, userName, reason = null) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // หา status "กำลังดำเนินการ"
+            const Status = require('../models/status.model');
+            const inProgressStatus = await Status.findOne({ 
+                'title.value': 'กำลังดำเนินการ' 
+            }).lean();
+            
+            if (!inProgressStatus) {
+                console.error('ไม่พบ status "กำลังดำเนินการ"');
+                return reject(new Error('ไม่พบ status "กำลังดำเนินการ"'));
+            }
+
+            const updateData = {
+                'caseManagement.isOpen': true,
+                'caseManagement.openedBy': userName, 
+                'caseManagement.openedAt': new Date(),
+                'caseManagement.openedReason': reason,
+                'status': inProgressStatus._id, 
+                $push: {
+                    'caseManagement.caseHistory': {
+                        action: 'opened',
+                        by: userName,
+                        at: new Date(),
+                        reason: reason
+                    }
+                }
+            };
+
+            objSchema
+                .findByIdAndUpdate(reportId, updateData, { new: true })
+                .populate([
+                    { path: 'type', select: 'title description' },
+                    { path: 'level', select: 'title description' },
+                    { path: 'status', select: 'title description' },
+                    { path: 'tracking.status', select: 'title description' },
+                    { path: 'tracking.by', select: 'userInfo.firstName userInfo.lastName authen.email', options: { strictPopulate: false } },
+                    { path: 'user', select: 'title description' }
+                ])
+                .lean()
+                .exec(function (err, doc) {
+                    err ? reject(err) : resolve(doc);
+                });
+        } catch (error) {
+            reject(error);
+        }
+    });
+};
+
+exports.closeCase = async function (reportId, userName, reason = null) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // หา status "ควบคุมได้แล้ว"
+            const Status = require('../models/status.model');
+            const controlledStatus = await Status.findOne({ 
+                'title.value': 'ควบคุมได้แล้ว' 
+            }).lean();
+            
+            if (!controlledStatus) {
+                console.error('ไม่พบ status "ควบคุมได้แล้ว"');
+                return reject(new Error('ไม่พบ status "ควบคุมได้แล้ว"'));
+            }
+
+            const updateData = {
+                'caseManagement.isOpen': false,
+                'caseManagement.closedBy': userName, // ใช้ userName แทน userId
+                'caseManagement.closedAt': new Date(),
+                'caseManagement.closedReason': reason,
+                'status': controlledStatus._id, // อัพเดท status เป็น "ควบคุมได้แล้ว"
+                $push: {
+                    'caseManagement.caseHistory': {
+                        action: 'closed',
+                        by: userName, // ใช้ userName แทน userId
+                        at: new Date(),
+                        reason: reason
+                    }
+                }
+            };
+
+            objSchema
+                .findByIdAndUpdate(reportId, updateData, { new: true })
+                .populate([
+                    { path: 'type', select: 'title description' },
+                    { path: 'level', select: 'title description' },
+                    { path: 'status', select: 'title description' },
+                    { path: 'tracking.status', select: 'title description' },
+                    { path: 'tracking.by', select: 'userInfo.firstName userInfo.lastName authen.email', options: { strictPopulate: false } },
+                    { path: 'user', select: 'title description' }
+                    // ลบ populate ของ caseManagement เพราะใช้ string แทน ObjectId
+                ])
+                .lean()
+                .exec(function (err, doc) {
+                    err ? reject(err) : resolve(doc);
+                });
+        } catch (error) {
+            reject(error);
+        }
+    });
+};
+
+exports.getCaseHistory = async function (reportId) {
+    return new Promise((resolve, reject) => {
+        objSchema
+            .findById(reportId)
+            .select('caseManagement')
+            // ลบ populate เพราะใช้ string แทน ObjectId
+            .lean()
+            .exec(function (err, doc) {
+                err ? reject(err) : resolve(doc);
+            });
+    });
+};

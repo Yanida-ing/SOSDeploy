@@ -12,6 +12,7 @@ const DialogModule = {
     },
     loading:false,
     message:0,
+    isDisaters: false, // เพิ่ม state สำหรับ disaster dialog
 
   },
 
@@ -27,6 +28,10 @@ const DialogModule = {
 
     dialog(state, data) {
       state.dialog = data
+    },
+
+    isDisaters(state, data) {
+      state.isDisaters = data
     },
   },
 
@@ -46,6 +51,10 @@ const DialogModule = {
 
     dialog(state) {
       return state.dialog
+    },
+
+    isDisaters(state) {
+      return state.isDisaters
     }
   },
 };

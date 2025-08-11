@@ -91,6 +91,7 @@ const Dashboard = () => import('@/projects/views/dashboards/index.vue')
 const Dashboard2 = () => import('@/projects/views/dashboards/components/Dashboard2.vue')
 const Chat = () => import('@/projects/views/chat/index.vue')
 const Report = () => import('@/projects/views/reports/index.vue')
+const Assets = () => import('@/projects/views/assets/index.vue')
 
 const SSignin = () => import('@/projects/views/settings/signin/index.vue')
 
@@ -129,6 +130,20 @@ export default new Router({
 
     {
       path: '/',
+      redirect: '/report',
+      name: 'Report',
+      component: TheContainer_Landing,
+      children: [
+        {
+          path: 'report',
+          name: 'Report',
+          component: Report
+        },
+      ]
+    },
+
+    {
+      path: '/',
       redirect: '/chat',
       name: 'Chat',
       component: TheContainer,
@@ -141,24 +156,12 @@ export default new Router({
       ]
     },
 
-    {
-      path: '/',
-      redirect: '/report',
-      name: 'Report',
-      component: TheContainer,
-      children: [
-        {
-          path: 'report',
-          name: 'Report',
-          component: Report
-        },
-      ]
-    },
+
     {
       path: '/',
       redirect: '/dashboard',
       name: 'Home',
-      component: TheContainer,
+      component: TheContainer_Landing,
       children: [
         {
           path: 'dashboard',
@@ -170,6 +173,12 @@ export default new Router({
           path: 'case',
           name: 'case',
           component: Dashboard2
+        },
+
+        {
+          path: 'assets',
+          name: 'Assets',
+          component: Assets
         },
 
 

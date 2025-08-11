@@ -37,7 +37,8 @@ const DisasterReportSchema = new mongoose.Schema({
   media: [
     {
       type: { type: String, required: true },
-      src: String
+      src: String,
+      name: String 
     }
   ],
   contact: {
@@ -72,6 +73,56 @@ const DisasterReportSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'DisasterReportGroup',
     default: null
+  },
+  // เพิ่ม field สำหรับ case management
+  caseManagement: {
+    isOpen: {
+      type: Boolean,
+      default: false
+    },
+    openedBy: {
+      type: String, // เปลี่ยนจาก ObjectId เป็น String
+      default: null
+    },
+    openedAt: {
+      type: Date,
+      default: null
+    },
+    openedReason: {
+      type: String,
+      default: null
+    },
+    closedBy: {
+      type: String, // เปลี่ยนจาก ObjectId เป็น String
+      default: null
+    },
+    closedAt: {
+      type: Date,
+      default: null
+    },
+    closedReason: {
+      type: String,
+      default: null
+    },
+    caseHistory: [{
+      action: {
+        type: String,
+        enum: ['opened', 'closed'],
+        required: true
+      },
+      by: {
+        type: String, // เปลี่ยนจาก ObjectId เป็น String
+        required: true
+      },
+      at: {
+        type: Date,
+        default: Date.now
+      },
+      reason: {
+        type: String,
+        default: null
+      }
+    }]
   }
 }, { timestamps: true 
 } );

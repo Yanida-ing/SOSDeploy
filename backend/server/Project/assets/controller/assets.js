@@ -8,9 +8,8 @@ exports.onQuery = async function (query) {
             .findOne(query)
             // .sort("coin")
             .populate([
-                // {path : "address.province"},
-                // {path : "address.district"},
-                // {path : "bankInfo.bankName"}
+                {path : "category"},
+                {path : "subtype"}
             ])
             .lean()
             .exec(function (err, doc) {
@@ -24,9 +23,8 @@ exports.onQuerys = async function (query) {
             .find(query)
             .sort({_id:-1})
             .populate([
-                // {path : "address.province"},
-                // {path : "address.district"},
-                // {path : "bankInfo.bankName"}
+                {path : "category"},
+                {path : "subtype"}
             ])
             .lean()
             .exec(function (err, doc) {
@@ -58,9 +56,8 @@ exports.onUpdate = async function (query,data) {
         objSchema
             .findOneAndUpdate(query, data, { new: true, returnOriginal: false, upsert: true })
             .populate([
-                // {path : "address.province"},
-                // {path : "address.district"},
-                // {path : "bankInfo.bankName"}
+                {path : "category"},
+                {path : "subtype"}
             ])
             .lean()
             .exec(function (err, doc) {

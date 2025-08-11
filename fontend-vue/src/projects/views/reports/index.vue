@@ -1,37 +1,27 @@
 <template>
   <div>
-    <CCard>
-      <CCardHeader>
-        <h4>แจ้งเหตุการณ์</h4>
-        <ul class="nav nav-tabs card-header-tabs">
-          <li class="nav-item">
-            <a
-              class="nav-link"
-              :class="{ active: mode === 'form' }"
-              @click="mode = 'form'"
-              href="javascript:void(0)"
-            >
-              📄 แบบฟอร์ม
-            </a>
-          </li>
-          <li class="nav-item">
-            <a
-              class="nav-link"
-              :class="{ active: mode === 'chat' }"
-              @click="mode = 'chat'"
-              href="javascript:void(0)"
-            >
-              💬 แบบแชท
-            </a>
-          </li>
-        </ul>
-      </CCardHeader>
-
-      <CCardBody>
-        <ReportForm v-if="mode === 'form'" />
-        <ReportChat v-else />
-      </CCardBody>
-    </CCard>
+    <CTabs class=" pb-0"  fill >
+      <CTab >
+        <template slot="title">
+          <CIcon name="cil-speech"/> AI Report
+        </template>
+        <CRow>
+          <CCol>
+            <ReportChat />
+          </CCol>
+        </CRow>
+      </CTab>
+      <CTab >
+        <template slot="title">
+          <CIcon name="cil-clipboard"/> แบบฟอร์ม
+        </template>
+        <CRow>
+          <CCol>
+            <ReportForm/>
+          </CCol>
+        </CRow>
+      </CTab>
+    </CTabs>
   </div>
 </template>
 
@@ -40,7 +30,7 @@ import ReportForm from './components/ReportForm.vue'
 import ReportChat from './components/ReportChat.vue'
 
 export default {
-  name: 'ReportIndex',
+  name: 'Report',
   components: {
     ReportForm,
     ReportChat,

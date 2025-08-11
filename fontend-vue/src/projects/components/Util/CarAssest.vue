@@ -114,7 +114,6 @@ export default {
   },
   data () {
     return {
-      item:[]
     }
   },
 
